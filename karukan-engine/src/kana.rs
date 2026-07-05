@@ -224,6 +224,177 @@ pub fn fullwidth_to_ascii_char(c: char) -> char {
     }
 }
 
+fn romaji_digraph(first: char, second: char) -> Option<&'static str> {
+    match (first, second) {
+        ('き', 'ゃ') => Some("kya"),
+        ('き', 'ゅ') => Some("kyu"),
+        ('き', 'ょ') => Some("kyo"),
+        ('ぎ', 'ゃ') => Some("gya"),
+        ('ぎ', 'ゅ') => Some("gyu"),
+        ('ぎ', 'ょ') => Some("gyo"),
+        ('し', 'ゃ') => Some("sha"),
+        ('し', 'ゅ') => Some("shu"),
+        ('し', 'ょ') => Some("sho"),
+        ('じ', 'ゃ') => Some("ja"),
+        ('じ', 'ゅ') => Some("ju"),
+        ('じ', 'ょ') => Some("jo"),
+        ('ち', 'ゃ') => Some("cha"),
+        ('ち', 'ゅ') => Some("chu"),
+        ('ち', 'ょ') => Some("cho"),
+        ('ぢ', 'ゃ') => Some("ja"),
+        ('ぢ', 'ゅ') => Some("ju"),
+        ('ぢ', 'ょ') => Some("jo"),
+        ('に', 'ゃ') => Some("nya"),
+        ('に', 'ゅ') => Some("nyu"),
+        ('に', 'ょ') => Some("nyo"),
+        ('ひ', 'ゃ') => Some("hya"),
+        ('ひ', 'ゅ') => Some("hyu"),
+        ('ひ', 'ょ') => Some("hyo"),
+        ('び', 'ゃ') => Some("bya"),
+        ('び', 'ゅ') => Some("byu"),
+        ('び', 'ょ') => Some("byo"),
+        ('ぴ', 'ゃ') => Some("pya"),
+        ('ぴ', 'ゅ') => Some("pyu"),
+        ('ぴ', 'ょ') => Some("pyo"),
+        ('み', 'ゃ') => Some("mya"),
+        ('み', 'ゅ') => Some("myu"),
+        ('み', 'ょ') => Some("myo"),
+        ('り', 'ゃ') => Some("rya"),
+        ('り', 'ゅ') => Some("ryu"),
+        ('り', 'ょ') => Some("ryo"),
+        _ => None,
+    }
+}
+
+fn romaji_char(c: char) -> Option<&'static str> {
+    match c {
+        'あ' | 'ぁ' => Some("a"),
+        'い' | 'ぃ' => Some("i"),
+        'う' | 'ぅ' => Some("u"),
+        'え' | 'ぇ' => Some("e"),
+        'お' | 'ぉ' => Some("o"),
+        'か' => Some("ka"),
+        'き' => Some("ki"),
+        'く' => Some("ku"),
+        'け' => Some("ke"),
+        'こ' => Some("ko"),
+        'が' => Some("ga"),
+        'ぎ' => Some("gi"),
+        'ぐ' => Some("gu"),
+        'げ' => Some("ge"),
+        'ご' => Some("go"),
+        'さ' => Some("sa"),
+        'し' => Some("shi"),
+        'す' => Some("su"),
+        'せ' => Some("se"),
+        'そ' => Some("so"),
+        'ざ' => Some("za"),
+        'じ' => Some("ji"),
+        'ず' => Some("zu"),
+        'ぜ' => Some("ze"),
+        'ぞ' => Some("zo"),
+        'た' => Some("ta"),
+        'ち' => Some("chi"),
+        'つ' | 'っ' => Some("tsu"),
+        'て' => Some("te"),
+        'と' => Some("to"),
+        'だ' => Some("da"),
+        'ぢ' => Some("ji"),
+        'づ' => Some("zu"),
+        'で' => Some("de"),
+        'ど' => Some("do"),
+        'な' => Some("na"),
+        'に' => Some("ni"),
+        'ぬ' => Some("nu"),
+        'ね' => Some("ne"),
+        'の' => Some("no"),
+        'は' => Some("ha"),
+        'ひ' => Some("hi"),
+        'ふ' => Some("fu"),
+        'へ' => Some("he"),
+        'ほ' => Some("ho"),
+        'ば' => Some("ba"),
+        'び' => Some("bi"),
+        'ぶ' => Some("bu"),
+        'べ' => Some("be"),
+        'ぼ' => Some("bo"),
+        'ぱ' => Some("pa"),
+        'ぴ' => Some("pi"),
+        'ぷ' => Some("pu"),
+        'ぺ' => Some("pe"),
+        'ぽ' => Some("po"),
+        'ま' => Some("ma"),
+        'み' => Some("mi"),
+        'む' => Some("mu"),
+        'め' => Some("me"),
+        'も' => Some("mo"),
+        'や' | 'ゃ' => Some("ya"),
+        'ゆ' | 'ゅ' => Some("yu"),
+        'よ' | 'ょ' => Some("yo"),
+        'ら' => Some("ra"),
+        'り' => Some("ri"),
+        'る' => Some("ru"),
+        'れ' => Some("re"),
+        'ろ' => Some("ro"),
+        'わ' => Some("wa"),
+        'を' => Some("wo"),
+        'ん' => Some("n"),
+        'ゔ' => Some("vu"),
+        _ => None,
+    }
+}
+
+/// Convert hiragana or katakana to a canonical half-width romaji spelling.
+///
+/// This is intended for IME function-key conversion (F9/F10), where Karukan
+/// needs an ASCII representation after the original keystrokes have already
+/// been folded into kana. Non-kana characters pass through, with full-width
+/// ASCII alphanumerics normalized to half-width.
+pub fn kana_to_romaji(text: &str) -> String {
+    let hiragana = katakana_to_hiragana(text);
+    let chars: Vec<char> = hiragana.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c == 'っ' {
+            if let Some(next) = chars.get(i + 1) {
+                let next_romaji = chars
+                    .get(i + 2)
+                    .and_then(|small| romaji_digraph(*next, *small))
+                    .or_else(|| romaji_char(*next));
+                if let Some(first_consonant) =
+                    next_romaji.and_then(|s| s.chars().next()).filter(|ch| {
+                        ch.is_ascii_alphabetic() && !matches!(ch, 'a' | 'i' | 'u' | 'e' | 'o')
+                    })
+                {
+                    out.push(first_consonant);
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        if let Some(next) = chars.get(i + 1)
+            && let Some(romaji) = romaji_digraph(c, *next)
+        {
+            out.push_str(romaji);
+            i += 2;
+            continue;
+        }
+
+        if let Some(romaji) = romaji_char(c) {
+            out.push_str(romaji);
+        } else {
+            out.push(fullwidth_to_ascii_char(c));
+        }
+        i += 1;
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +493,14 @@ mod tests {
         // Pass through non-katakana
         assert_eq!(katakana_to_half_width("abc"), "abc");
         assert_eq!(katakana_to_half_width("漢字"), "漢字");
+    }
+
+    #[test]
+    fn test_kana_to_romaji() {
+        assert_eq!(kana_to_romaji("あい"), "ai");
+        assert_eq!(kana_to_romaji("かんじ"), "kanji");
+        assert_eq!(kana_to_romaji("がっこう"), "gakkou");
+        assert_eq!(kana_to_romaji("キャット"), "kyatto");
     }
 
     #[test]

@@ -7,7 +7,7 @@ pub mod romaji;
 
 pub use dict::{Candidate as DictCandidate, DictEntry, Dictionary, LookupResult};
 pub use kana::{
-    contains_kana, hiragana_to_katakana, is_pure_full_katakana, is_pure_hiragana,
+    contains_kana, hiragana_to_katakana, is_pure_full_katakana, is_pure_hiragana, kana_to_romaji,
     katakana_to_hiragana, normalize_nfkc,
 };
 pub use kanji::{Backend, KanaKanjiConverter};

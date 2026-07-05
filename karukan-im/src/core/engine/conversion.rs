@@ -578,6 +578,9 @@ impl InputMethodEngine {
         match key.keysym {
             Keysym::RETURN => self.commit_conversion(),
             Keysym::ESCAPE => self.cancel_conversion(),
+            Keysym::F6 | Keysym::F7 | Keysym::F8 | Keysym::F9 | Keysym::F10 => {
+                self.apply_function_key_conversion(key.keysym)
+            }
             Keysym::SPACE | Keysym::DOWN | Keysym::TAB => self.next_candidate(),
             Keysym::UP => self.prev_candidate(),
             Keysym::PAGE_DOWN => self.next_candidate_page(),
@@ -609,6 +612,56 @@ impl InputMethodEngine {
                 EngineResult::not_consumed()
             }
         }
+    }
+
+    /// Apply MS IME-style F6-F10 conversion to the current explicit conversion.
+    ///
+    /// This intentionally only runs in [`InputState::Conversion`], after the
+    /// user has explicitly opened conversion candidates. Live-conversion
+    /// preedit text in [`InputState::Composing`] is left untouched so long-form
+    /// live input does not get accidentally rewritten wholesale.
+    fn apply_function_key_conversion(&mut self, keysym: Keysym) -> EngineResult {
+        let Some((selected_text, reading)) = self.selected_conversion_info() else {
+            return EngineResult::not_consumed();
+        };
+        let source = reading.unwrap_or(selected_text);
+        if source.is_empty() {
+            return EngineResult::consumed();
+        }
+
+        let hiragana = karukan_engine::katakana_to_hiragana(&source);
+        let converted = match keysym {
+            Keysym::F6 => hiragana,
+            Keysym::F7 => karukan_engine::hiragana_to_katakana(&hiragana),
+            Keysym::F8 => karukan_engine::kana::katakana_to_half_width(
+                &karukan_engine::hiragana_to_katakana(&hiragana),
+            ),
+            Keysym::F9 => karukan_engine::kana_to_romaji(&source)
+                .chars()
+                .map(karukan_engine::kana::ascii_to_fullwidth_char)
+                .collect(),
+            Keysym::F10 => karukan_engine::kana_to_romaji(&source)
+                .chars()
+                .map(karukan_engine::kana::fullwidth_to_ascii_char)
+                .collect(),
+            _ => return EngineResult::not_consumed(),
+        };
+
+        let preedit = Preedit::with_text_underlined(&converted);
+        self.state = InputState::Conversion {
+            preedit: preedit.clone(),
+            candidates: CandidateList::new(vec![Candidate::with_reading(
+                converted,
+                source.clone(),
+            )]),
+        };
+        self.input_buf.text = source;
+        self.input_buf.cursor_pos = self.input_buf.text.chars().count();
+
+        EngineResult::consumed()
+            .with_action(EngineAction::UpdatePreedit(preedit))
+            .with_action(EngineAction::HideCandidates)
+            .with_action(EngineAction::HideAuxText)
     }
 
     /// Get selected text and reading from conversion state, or None if not in conversion
