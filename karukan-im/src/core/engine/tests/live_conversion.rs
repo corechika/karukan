@@ -220,38 +220,38 @@ fn test_alphabet_mode_pure_latin_preserves_live_text() {
     assert_eq!(engine.live.text, "AB");
 }
 
-// --- Ctrl+Space full-width space tests ---
+// --- Ctrl+Space half-width space tests ---
 
 #[test]
-fn test_ctrl_space_inserts_fullwidth_space_in_empty() {
+fn test_ctrl_space_inserts_halfwidth_space_in_empty() {
     let mut engine = InputMethodEngine::new();
 
-    // Ctrl+Space in Empty state -> start input with full-width space
+    // Ctrl+Space in Empty state -> start input with half-width space
     let result = engine.process_key(&press_ctrl(Keysym::SPACE));
     assert!(result.consumed);
     assert!(matches!(engine.state(), InputState::Composing { .. }));
-    assert_eq!(engine.preedit().unwrap().text(), "\u{3000}");
+    assert_eq!(engine.preedit().unwrap().text(), " ");
 }
 
 #[test]
-fn test_ctrl_space_inserts_fullwidth_space_in_hiragana() {
+fn test_ctrl_space_inserts_halfwidth_space_in_hiragana() {
     let mut engine = InputMethodEngine::new();
 
     // Type "あ"
     engine.process_key(&press('a'));
     assert_eq!(engine.preedit().unwrap().text(), "あ");
 
-    // Ctrl+Space -> insert full-width space
+    // Ctrl+Space -> insert half-width space
     let result = engine.process_key(&press_ctrl(Keysym::SPACE));
     assert!(result.consumed);
-    assert_eq!(engine.preedit().unwrap().text(), "あ\u{3000}");
+    assert_eq!(engine.preedit().unwrap().text(), "あ ");
 }
 
 #[test]
-fn test_ctrl_space_fullwidth_space_commit() {
+fn test_ctrl_space_halfwidth_space_commit() {
     let mut engine = InputMethodEngine::new();
 
-    // Type "あ" + fullwidth space
+    // Type "あ" + half-width space
     engine.process_key(&press('a'));
     engine.process_key(&press_ctrl(Keysym::SPACE));
 
@@ -268,7 +268,7 @@ fn test_ctrl_space_fullwidth_space_commit() {
             }
         })
         .unwrap();
-    assert_eq!(commit_text, "あ\u{3000}");
+    assert_eq!(commit_text, "あ ");
 }
 
 // --- Ctrl+Shift+L live conversion toggle tests ---
