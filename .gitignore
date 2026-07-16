@@ -31,6 +31,7 @@ __pycache__/
 
 # Claude Code
 .claude/
+.worktrees/
 
 build
 *.bin
