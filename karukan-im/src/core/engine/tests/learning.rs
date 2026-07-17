@@ -21,6 +21,23 @@ fn engine_with_learned(reading: &str, surface: &str) -> InputMethodEngine {
 }
 
 #[test]
+fn record_learning_ignores_emoji_shortcodes() {
+    let mut engine = InputMethodEngine::new();
+    engine.learning = Some(LearningCache::new(100));
+
+    engine.record_learning(":smile", "😄");
+
+    assert!(
+        engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup(":smile")
+            .is_empty()
+    );
+}
+
+#[test]
 fn build_candidates_includes_learning_when_not_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 

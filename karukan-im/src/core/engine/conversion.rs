@@ -386,7 +386,7 @@ impl InputMethodEngine {
             // after rewriters have run — otherwise `:smile` would be
             // pinned to the top of the candidate list as a Fallback
             // and outrank the 😄 we surface in step 5/6.
-            if builder.is_empty() && self.input_mode != InputMode::Emoji {
+            if builder.is_empty() && self.mode.current() != InputMode::Emoji {
                 builder.push(AnnotatedCandidate::new(
                     hiragana.clone(),
                     CandidateSource::Fallback,
@@ -420,7 +420,7 @@ impl InputMethodEngine {
             .converters
             .rewriters
             .rewrite_all(&[reading.to_string()]);
-        if self.input_mode == InputMode::Emoji {
+        if self.mode.current() == InputMode::Emoji {
             for (variant, description) in rewriter_variants {
                 builder.push(
                     AnnotatedCandidate::new(variant, CandidateSource::Rewriter)
@@ -606,7 +606,14 @@ impl InputMethodEngine {
                     && !key.modifiers.control_key
                     && !key.modifiers.alt_key
                 {
-                    return self.commit_conversion_and_continue(ch);
+                    let is_shift_alpha = ch.is_ascii_uppercase()
+                        || (key.modifiers.shift_key && ch.is_ascii_alphabetic());
+                    let ch = if is_shift_alpha {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        ch
+                    };
+                    return self.commit_conversion_and_continue(ch, is_shift_alpha);
                 }
 
                 EngineResult::not_consumed()
@@ -678,6 +685,13 @@ impl InputMethodEngine {
 
     /// Record a conversion selection in the learning cache.
     pub(super) fn record_learning(&mut self, reading: &str, surface: &str) {
+        // Emoji shortcodes are not kana readings and must never enter the
+        // kana-keyed learning cache, even if the temporary Emoji mode has
+        // since transitioned to another temporary mode.
+        if reading.starts_with(':') {
+            return;
+        }
+
         if let Some(cache) = &mut self.learning {
             cache.record(reading, surface);
         }
@@ -696,7 +710,7 @@ impl InputMethodEngine {
         // Skip learning when the buffer is a `:shortcode` query — the
         // reading would be e.g. `:smile`, which isn't a hiragana key
         // and would corrupt the kana-keyed learning cache.
-        if self.input_mode != InputMode::Emoji
+        if self.mode.current() != InputMode::Emoji
             && let Some(reading) = &reading
         {
             self.record_learning(reading, &text);
@@ -704,22 +718,21 @@ impl InputMethodEngine {
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
-        self.exit_emoji_mode();
+        self.mode.exit_temporary();
 
         EngineResult::consumed()
-            .with_action(EngineAction::UpdatePreedit(Preedit::new()))
             .with_action(EngineAction::HideCandidates)
             .with_action(EngineAction::HideAuxText)
             .with_action(EngineAction::Commit(text))
     }
 
     /// Commit current conversion and then process a new character as fresh input
-    fn commit_conversion_and_continue(&mut self, ch: char) -> EngineResult {
+    fn commit_conversion_and_continue(&mut self, ch: char, is_shift_alpha: bool) -> EngineResult {
         let Some((text, reading)) = self.selected_conversion_info() else {
             return EngineResult::not_consumed();
         };
 
-        if self.input_mode != InputMode::Emoji
+        if self.mode.current() != InputMode::Emoji
             && let Some(reading) = &reading
         {
             self.record_learning(reading, &text);
@@ -727,7 +740,11 @@ impl InputMethodEngine {
 
         self.state = InputState::Empty;
         self.input_buf.text.clear();
-        self.exit_emoji_mode();
+        self.mode.exit_temporary();
+
+        if is_shift_alpha {
+            self.mode.enter_temporary(InputMode::Alphabet);
+        }
 
         // Start new input with the character
         let new_input_result = self.start_input(ch);
@@ -844,9 +861,9 @@ impl InputMethodEngine {
         // Commit immediately after digit selection
 
         self.state = InputState::Empty;
+        self.mode.exit_temporary();
 
         EngineResult::consumed()
-            .with_action(EngineAction::UpdatePreedit(Preedit::new()))
             .with_action(EngineAction::HideCandidates)
             .with_action(EngineAction::HideAuxText)
             .with_action(EngineAction::Commit(selected_text))

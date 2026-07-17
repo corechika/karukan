@@ -132,13 +132,9 @@ pub struct InputMethodEngine {
     config: EngineConfig,
     /// Conversion timing and adaptive model metrics
     metrics: ConversionMetrics,
-    /// Current input mode (Hiragana, Katakana, or Alphabet)
-    input_mode: InputMode,
-    /// Mode active immediately before entering [`InputMode::Emoji`],
-    /// so commit/cancel/backspace-to-empty can put the user back where
-    /// they were instead of dropping them in Hiragana every time. `None`
-    /// whenever the current mode is not Emoji.
-    pre_emoji_mode: Option<InputMode>,
+    /// Current input mode plus the mode to come back to when a temporary
+    /// mode (Emoji, Alphabet) ends — see [`ModeState`]
+    mode: ModeState,
     /// Composed input buffer (hiragana text, cursor position)
     input_buf: InputBuffer,
     /// Live conversion state
@@ -169,8 +165,7 @@ impl InputMethodEngine {
             surrounding_context: None,
             config: EngineConfig::default(),
             metrics: ConversionMetrics::default(),
-            input_mode: InputMode::Hiragana,
-            pre_emoji_mode: None,
+            mode: ModeState::default(),
             input_buf: InputBuffer::new(),
             live: LiveConversion::default(),
             chunks: Vec::new(),
@@ -242,23 +237,11 @@ impl InputMethodEngine {
     pub fn reset(&mut self) {
         self.state = InputState::Empty;
         self.converters.romaji.reset();
-        self.input_mode = InputMode::Hiragana;
-        self.pre_emoji_mode = None;
+        self.mode = ModeState::default();
         self.input_buf.clear();
         self.live.text.clear();
         self.chunks.clear();
         self.metrics = ConversionMetrics::default();
-    }
-
-    /// If currently in Emoji mode, restore the mode the user was in
-    /// before they typed `:`. Falls back to Hiragana if nothing was
-    /// saved (defensive — `start_emoji_mode` always sets it). No-op
-    /// when not in Emoji mode, so it's safe to call unconditionally
-    /// from the various exit sites.
-    pub(super) fn exit_emoji_mode(&mut self) {
-        if self.input_mode == InputMode::Emoji {
-            self.input_mode = self.pre_emoji_mode.take().unwrap_or(InputMode::Hiragana);
-        }
     }
 
     /// If the display is empty, reset to Empty state and return the result.
@@ -274,13 +257,12 @@ impl InputMethodEngine {
             // against a buffer it no longer matches).
             self.live.text.clear();
             self.chunks.clear();
-            // Emoji mode is per-session and bound to the typed `:` —
-            // if the user erased back to an empty buffer, the session
-            // is over. Restore whatever mode the user was in before
-            // entering Emoji so the next keypress doesn't get treated
-            // as a literal emoji-query char (and so a Katakana-mode user
-            // lands back in Katakana, not Hiragana).
-            self.exit_emoji_mode();
+            // Temporary modes (Emoji, Alphabet) are per-composition:
+            // erasing back to an empty buffer ends the session, so restore
+            // the mode the user was in before entering it (a Katakana-mode
+            // user lands back in Katakana, and the next keypress doesn't
+            // get treated as a literal emoji-query char).
+            self.mode.exit_temporary();
             Some(
                 EngineResult::consumed()
                     .with_action(EngineAction::UpdatePreedit(Preedit::new()))
@@ -401,20 +383,37 @@ impl InputMethodEngine {
         self.surrounding_context = Some(SurroundingContext { left, right });
     }
 
-    /// Handle mode toggle keys (Right Alt/Super/Meta/Hyper): one-way non-Hiragana → Hiragana.
+    /// Handle mode toggle keys (Right Alt/Super/Meta/Hyper and the JIS 変換
+    /// key): one-way non-Hiragana → Hiragana.
     /// Returns `Some(result)` if the key was handled, `None` if not a mode toggle key.
     fn handle_mode_toggle_key(&mut self, key: &KeyEvent) -> Option<EngineResult> {
         if !key.keysym.is_mode_toggle_key() {
             return None;
         }
+        // 変換 is an ordinary key, not a modifier: a modified chord
+        // (Ctrl+変換 etc.) may be an app or fcitx5 shortcut, so only the
+        // bare press acts as the toggle. The right-modifier keysyms are
+        // exempt — their events routinely carry their own modifier state.
+        if key.keysym == Keysym::HENKAN && key.modifiers.any() {
+            return None;
+        }
+        // While a conversion is in flight (candidate window open) the
+        // toggle is inert: switching modes here would katakana-bake the
+        // conversion *reading* (not the preedit) and defeat the Emoji-mode
+        // learning guard — the commit path checks the current mode to
+        // decide whether the reading is safe to record in the kana-keyed
+        // learning cache. Resolve the conversion first, then toggle.
+        if matches!(self.state, InputState::Conversion { .. }) {
+            return Some(EngineResult::not_consumed());
+        }
         // Only consume the key when actually switching; otherwise pass through
         // so the system can properly track modifier state.
-        if key.is_press && self.input_mode != InputMode::Hiragana {
+        if key.is_press && self.mode.current() != InputMode::Hiragana {
             // Bake katakana before switching so preedit doesn't revert
-            if self.input_mode == InputMode::Katakana {
+            if self.mode.current() == InputMode::Katakana {
                 self.bake_katakana();
             }
-            self.input_mode = InputMode::Hiragana;
+            self.mode.set(InputMode::Hiragana);
             self.flush_romaji_to_composed();
             let aux = self.format_aux_composing();
             if matches!(self.state, InputState::Composing { .. }) {
@@ -510,6 +509,7 @@ impl InputMethodEngine {
                 self.live.text.clear();
                 self.state = InputState::Empty;
                 self.surrounding_context = None;
+                self.mode.exit_temporary();
                 text
             }
             InputState::Conversion { candidates, .. } => {
@@ -522,6 +522,7 @@ impl InputMethodEngine {
                 self.input_buf.clear();
                 self.state = InputState::Empty;
                 self.surrounding_context = None;
+                self.mode.exit_temporary();
                 text
             }
         }
@@ -533,10 +534,11 @@ impl InputMethodEngine {
     /// preedit/candidate-window teardown.
     pub fn commit_result(&mut self) -> EngineResult {
         let text = self.commit();
-        let mut result =
-            EngineResult::consumed().with_action(EngineAction::UpdatePreedit(Preedit::new()));
+        let mut result = EngineResult::consumed();
         if !text.is_empty() {
             result = result.with_action(EngineAction::Commit(text));
+        } else {
+            result = result.with_action(EngineAction::UpdatePreedit(Preedit::new()));
         }
         result
             .with_action(EngineAction::HideCandidates)

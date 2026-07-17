@@ -7,6 +7,8 @@ use crate::core::keycode::Keysym;
 // XKB keysyms for common keys (u32 aliases for the JSON payloads below)
 const XKB_KEY_K: u32 = Keysym::KEY_K.0;
 const XKB_KEY_A: u32 = Keysym::KEY_A.0;
+const XKB_KEY_H_UPPER: u32 = 0x0048;
+const XKB_KEY_I: u32 = 0x0069;
 const XKB_KEY_LOWER_L: u32 = Keysym::KEY_L.0;
 const XKB_KEY_RETURN: u32 = Keysym::RETURN.0;
 const XKB_KEY_ESCAPE: u32 = Keysym::ESCAPE.0;
@@ -111,6 +113,7 @@ fn test_typing_and_commit() {
     let resp = press(&mut server, XKB_KEY_RETURN);
     let commits = actions_of(&resp, "commit");
     assert_eq!(commits.last().unwrap()["text"], "か");
+    assert!(actions_of(&resp, "update_preedit").is_empty());
 }
 
 #[test]
@@ -140,6 +143,7 @@ fn test_explicit_commit_method() {
     );
     let commits = actions_of(&resp, "commit");
     assert_eq!(commits.last().unwrap()["text"], "か");
+    assert!(actions_of(&resp, "update_preedit").is_empty());
 
     // Nothing left to commit afterwards
     let resp = request(
@@ -147,6 +151,32 @@ fn test_explicit_commit_method() {
         json!({"jsonrpc":"2.0","id":8,"method":"commit"}),
     );
     assert!(actions_of(&resp, "commit").is_empty());
+    assert_eq!(
+        actions_of(&resp, "update_preedit").last().unwrap()["text"],
+        ""
+    );
+}
+
+#[test]
+fn test_explicit_commit_exits_temporary_alphabet_mode() {
+    let mut server = test_server();
+    request(
+        &mut server,
+        json!({"jsonrpc":"2.0","id":9,"method":"process_key","params":{
+            "keysym": XKB_KEY_H_UPPER,
+            "modifiers": {"shift": true}
+        }}),
+    );
+    press(&mut server, XKB_KEY_I);
+
+    request(
+        &mut server,
+        json!({"jsonrpc":"2.0","id":10,"method":"commit"}),
+    );
+
+    let resp = press(&mut server, XKB_KEY_A);
+    let preedits = actions_of(&resp, "update_preedit");
+    assert_eq!(preedits.last().unwrap()["text"], "あ");
 }
 
 #[test]
@@ -168,6 +198,7 @@ fn test_select_candidate_commits_page_candidate() {
     assert_eq!(resp["result"]["consumed"], true);
     let commits = actions_of(&resp, "commit");
     assert_eq!(commits.last().unwrap()["text"], first_text);
+    assert!(actions_of(&resp, "update_preedit").is_empty());
     assert!(!actions_of(&resp, "hide_candidates").is_empty());
 
     let resp = request(

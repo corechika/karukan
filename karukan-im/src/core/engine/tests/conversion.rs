@@ -45,12 +45,43 @@ fn test_conversion_char_commits_and_continues_romaji() {
 }
 
 #[test]
+fn test_conversion_shift_letter_commits_and_starts_temporary_alphabet() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+
+    let shift_h = KeyEvent::new(
+        Keysym(b'h' as u32),
+        KeyModifiers::new().with_shift(true),
+        true,
+    );
+    let result = engine.process_key(&shift_h);
+
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::Commit(_)))
+    );
+    assert!(matches!(engine.state(), InputState::Composing { .. }));
+    assert_eq!(engine.mode.current(), InputMode::Alphabet);
+    assert_eq!(engine.preedit().unwrap().text(), "H");
+
+    engine.process_key(&press('i'));
+    assert_eq!(engine.preedit().unwrap().text(), "Hi");
+    engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(engine.mode.current(), InputMode::Hiragana);
+}
+
+#[test]
 fn test_alphabet_mode_space_inserts_literal_space() {
     let mut engine = InputMethodEngine::new();
 
     // Enter alphabet mode via Shift+N
     engine.process_key(&press_shift('N'));
-    assert!(engine.input_mode == InputMode::Alphabet);
+    assert!(engine.mode.current() == InputMode::Alphabet);
 
     // Type "ew"
     engine.process_key(&press('e'));
